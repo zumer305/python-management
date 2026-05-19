@@ -1,0 +1,845 @@
+create folder (management)
+
+
+python -m django startproject myproject
+cd myproject
+python manage.py startapp accounts
+python manage.py startapp projects
+python manage.py startapp tasks
+
+
+myproject---settings.py 
+'rest_framework',   # for api
+    'accounts',     # hamari functionality
+    'projects',     # hamari functionality
+    'tasks',        # hamari functionality
+
+
+settings.py---login user access
+REST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+
+
+
+
+from django.contrib import admin
+from django.urls import path, include
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+
+    path('api/accounts/', include('accounts.urls')),
+    path('api/projects/', include('projects.urls')),
+    path('api/tasks/', include('tasks.urls')),
+] # main urls to connect app
+
+
+
+Authentication System (JWT) settings.py
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+}
+
+
+
+Accounts App Structure
+accounts/
+├── models.py
+├── serializers.py
+├── views.py
+├── urls.py
+serializers(signup)---------------------------signup(user bnata),,,profile (user data update)
+from django.contrib.auth.models import User
+from rest_framework import serializers
+
+class SignupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'first_name', 'last_name']
+        extra_kwargs = {
+            'password': {'write_only': True}
+        }
+
+    def create(self, validated_data):
+        user = User.objects.create_user(   #create_user(pass auto hash)
+            username=validated_data['username'],
+            email=validated_data.get('email'),
+            password=validated_data['password'],
+            first_name=validated_data.get('first_name'),
+            last_name=validated_data.get('last_name')
+        )
+        return user
+class ProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+
+
+
+
+views.py(signup+profile) new user create [get info , put update]----------------
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from django.contrib.auth.models import User
+from .serializers import SignupSerializer, ProfileSerializer
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def signup(request):
+    serializer = SignupSerializer(data=request.data)
+
+    if serializer.is_valid():
+        user = serializer.save()
+        return Response({
+            "message": "User created successfully",
+            "id": user.id,
+            "username": user.username
+        })
+
+    return Response(serializer.errors)
+
+
+@api_view(['GET', 'PUT'])
+@permission_classes([IsAuthenticated])
+def profile(request):
+
+    if request.method == 'GET':
+        serializer = ProfileSerializer(request.user)
+        return Response(serializer.data)
+
+    if request.method == 'PUT':
+        serializer = ProfileSerializer(request.user, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors)
+
+
+(urls.py)--------------------------
+from django.urls import path
+from .views import signup, profile
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+urlpatterns = [
+    path('signup/', signup),
+    path('login/', TokenObtainPairView.as_view()),
+    path('refresh/', TokenRefreshView.as_view()),
+    path('profile/', profile),
+]
+
+
+
+
+
+
+
+PROJECTS (Core Module)
+#Each project is linked to its creator using a foreign key relationship to enforce ownership-based access control.
+project--models.py
+from django.db import models
+from django.contrib.auth.models import User
+
+
+class Project(models.Model):
+
+    STATUS_CHOICES = [
+        ('planned', 'Planned'),
+        ('active', 'Active'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('urgent', 'Urgent'),
+    ]
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES)
+
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="projects")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title
+
+
+
+projects/serializers.py
+# Serializer enforces business rules such as ensuring end date is not earlier than start date and protecting system-generated fields.
+from rest_framework import serializers
+from .models import Project
+class ProjectSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Project
+        fields = '__all__'
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
+
+    # 🔥 VALIDATION 1: end date check
+    def validate(self, data):
+
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+
+        if start_date and end_date:
+            if end_date < start_date:
+                raise serializers.ValidationError("End date cannot be earlier than start date")
+
+        return data
+
+
+
+
+projects/views.py
+# Object-level ownership checks ensure that users can only access, update, or delete their own projects.
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from .models import Project
+from .serializers import ProjectSerializer
+
+
+# 🔥 CREATE + LIST
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def project_list_create(request):
+
+    if request.method == 'GET':
+        projects = Project.objects.filter(created_by=request.user)
+        serializer = ProjectSerializer(projects, many=True)
+        return Response(serializer.data)
+
+    if request.method == 'POST':
+        serializer = ProjectSerializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save(created_by=request.user)  # 🔥 ownership assign
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+
+# 🔥 DETAIL + UPDATE + DELETE
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def project_detail(request, pk):
+
+    try:
+        project = Project.objects.get(pk=pk, created_by=request.user)
+    except Project.DoesNotExist:
+        return Response({"error": "Project not found"}, status=404)
+
+    # GET
+    if request.method == 'GET':
+        serializer = ProjectSerializer(project)
+        return Response(serializer.data)
+
+    # UPDATE
+    if request.method == 'PUT':
+        serializer = ProjectSerializer(project, data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+    # DELETE
+    if request.method == 'DELETE':
+        project.delete()
+        return Response({"message": "Project deleted"})
+
+
+
+
+projects/urls.py
+
+from django.urls import path
+from .views import project_list_create, project_detail
+
+urlpatterns = [
+    path('', project_list_create),
+    path('<int:pk>/', project_detail),
+]
+
+
+
+
+tasks--(models.py)
+# task always belongs to project
+from django.db import models
+from django.contrib.auth.models import User
+from projects.models import Project
+
+
+class Task(models.Model):
+
+    STATUS_CHOICES = [
+        ('todo', 'To Do'),
+        ('in_progress', 'In Progress'),
+        ('review', 'Review'),
+        ('done', 'Done'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('urgent', 'Urgent'),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks")
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES)
+
+    due_date = models.DateField()
+
+    is_completed = models.BooleanField(default=False)
+
+    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_tasks")
+
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="tasks")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+
+        # 🔥 AUTO COMPLETION LOGIC
+        if self.status == 'done':
+            self.is_completed = True
+        else:
+            self.is_completed = False
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.title
+
+
+
+
+
+tasks/serializers.py
+# Task serializer enforces validation rules such as preventing past due dates and restricting task creation to user-owned projects only.
+from rest_framework import serializers
+from .models import Task
+from projects.models import Project
+from datetime import date
+
+
+class TaskSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Task
+        fields = '__all__'
+        read_only_fields = ['created_by', 'created_at', 'updated_at', 'is_completed']
+
+    # 🔥 VALIDATION
+    def validate(self, data):
+
+        due_date = data.get('due_date')
+        project = data.get('project')
+
+        # 1. due date check
+        if due_date and due_date < date.today():
+            raise serializers.ValidationError("Due date cannot be in the past")
+
+        # 2. project ownership check
+        request = self.context.get('request')
+
+        if project and request:
+            if project.created_by != request.user:
+                raise serializers.ValidationError("You cannot create task in another user's project")
+
+        return data
+
+
+
+
+
+tasks/views.py
+# Strict ownership checks ensure that users can only access and modify tasks that belong to them.
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from .models import Task
+from .serializers import TaskSerializer
+
+
+# 🔥 LIST + CREATE
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def task_list_create(request):
+
+    if request.method == 'GET':
+        tasks = Task.objects.filter(created_by=request.user)
+        serializer = TaskSerializer(tasks, many=True)
+        return Response(serializer.data)
+
+    if request.method == 'POST':
+        serializer = TaskSerializer(data=request.data, context={'request': request})
+
+        if serializer.is_valid():
+            serializer.save(created_by=request.user)
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+
+# 🔥 DETAIL + UPDATE + DELETE
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def task_detail(request, pk):
+
+    try:
+        task = Task.objects.get(pk=pk, created_by=request.user)
+    except Task.DoesNotExist:
+        return Response({"error": "Task not found"}, status=404)
+
+    # GET
+    if request.method == 'GET':
+        serializer = TaskSerializer(task)
+        return Response(serializer.data)
+
+    # UPDATE
+    if request.method == 'PUT':
+        serializer = TaskSerializer(task, data=request.data, context={'request': request})
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+    # DELETE
+    if request.method == 'DELETE':
+        task.delete()
+        return Response({"message": "Task deleted"})
+
+
+
+
+
+
+tasks-urls.pyfrom django.urls import path
+from .views import task_list_create, task_detail
+
+urlpatterns = [
+    path('', task_list_create),
+    path('<int:pk>/', task_detail),
+]
+
+
+
+
+
+
+
+FILTERING + SEARCH + ORDERING + PAGINATION
+filter kar sake (status, priority etc.)
+search kar sake (title/description)
+order kar sake (date, priority)
+pages mein dekh sake (pagination)
+
+---------------pip install django-filter-----------------------------
+INSTALLED_APPS = [
+    ...
+    'django_filters',
+]
+REST_FRAMEWORK = {
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 5
+}
+
+
+projects/filters.py (NEW FILE)
+
+import django_filters
+from .models import Project
+
+
+class ProjectFilter(django_filters.FilterSet):
+
+    class Meta:
+        model = Project
+        fields = {
+            'status': ['exact'],
+            'priority': ['exact'],
+            'start_date': ['gte', 'lte'],
+            'end_date': ['gte', 'lte'],
+        }
+
+
+
+
+
+
+
+tasks(views.py)
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+from .models import Task
+from .serializers import TaskSerializer
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def task_list_create(request):
+
+    if request.method == 'GET':
+
+        tasks = Task.objects.filter(created_by=request.user)
+
+        # 🔍 FILTER + SEARCH + ORDERING
+        filter_backend = DjangoFilterBackend()
+        search_backend = SearchFilter()
+        ordering_backend = OrderingFilter()
+
+        queryset = filter_backend.filter_queryset(request, tasks, view=None)
+        queryset = search_backend.filter_queryset(request, queryset, view=None)
+        queryset = ordering_backend.filter_queryset(request, queryset, view=None)
+
+        serializer = TaskSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    if request.method == 'POST':
+        serializer = TaskSerializer(data=request.data, context={'request': request})
+
+        if serializer.is_valid():
+            serializer.save(created_by=request.user)
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def task_detail(request, pk):
+
+    try:
+        task = Task.objects.get(pk=pk, created_by=request.user)
+    except Task.DoesNotExist:
+        return Response({"error": "Task not found"}, status=404)
+
+    if request.method == 'GET':
+        serializer = TaskSerializer(task)
+        return Response(serializer.data)
+
+    if request.method == 'PUT':
+        serializer = TaskSerializer(task, data=request.data, context={'request': request})
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+    if request.method == 'DELETE':
+        task.delete()
+        return Response({"message": "Task deleted"})
+
+
+
+
+projects(views.py)
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+
+from .models import Project
+from .serializers import ProjectSerializer
+from .filters import ProjectFilter
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+def project_list_create(request):
+
+    if request.method == 'GET':
+
+        projects = Project.objects.filter(created_by=request.user)
+
+        # 🔍 FILTER + SEARCH + ORDERING setup
+        filter_backend = DjangoFilterBackend()
+        search_backend = SearchFilter()
+        ordering_backend = OrderingFilter()
+
+        queryset = filter_backend.filter_queryset(request, projects, view=None)
+        queryset = search_backend.filter_queryset(request, queryset, view=None)
+        queryset = ordering_backend.filter_queryset(request, queryset, view=None)
+
+        serializer = ProjectSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    if request.method == 'POST':
+        serializer = ProjectSerializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save(created_by=request.user)
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def project_detail(request, pk):
+
+    try:
+        project = Project.objects.get(pk=pk, created_by=request.user)
+    except Project.DoesNotExist:
+        return Response({"error": "Project not found"}, status=404)
+
+    if request.method == 'GET':
+        serializer = ProjectSerializer(project)
+        return Response(serializer.data)
+
+    if request.method == 'PUT':
+        serializer = ProjectSerializer(project, data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(serializer.errors)
+
+    if request.method == 'DELETE':
+        project.delete()
+        return Response({"message": "Project deleted"})
+
+
+
+
+projects/permissions.py
+from rest_framework.permissions import BasePermission
+class IsOwner(BasePermission):
+
+    def has_object_permission(self, request, view, obj):
+        return obj.created_by == request.user
+
+
+
+
+
+
+
+--------Admin panel is configured with filters, search, and list display for quick data inspection and management.
+
+projects/admin.py
+from django.contrib import admin
+from .models import Project
+@admin.register(Project)
+class ProjectAdmin(admin.ModelAdmin):
+    list_display = ('title', 'status', 'priority', 'created_by', 'created_at')
+    list_filter = ('status', 'priority', 'created_at')
+    search_fields = ('title', 'description')
+
+
+
+
+tasks/admin.py
+from django.contrib import admin
+from .models import Task
+@admin.register(Task)
+class TaskAdmin(admin.ModelAdmin):
+    list_display = ('title', 'status', 'priority', 'project', 'created_by', 'due_date')
+    list_filter = ('status', 'priority', 'due_date')
+    search_fields = ('title', 'description')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    (environment)
+    python -m venv venv
+    venv\Scripts\activate
+    pip install django djangorestframework djangorestframework-simplejwt django-filter
+    python manage.py makemigrations
+    python manage.py migrate
+
+  ---------------------------------------------ADMIN----------------------------
+Username (leave blank to use 'hp'): zumer
+Email address: zumerniaz305@gmail.com
+Password: zumer12345
+Password (again): zumer12345
+Superuser created successfully.
+-------------------------------------------------------------------------------------
+
+post http://127.0.0.1:8000/api/accounts/signup/
+body
+{
+  "username": "user1",
+  "email": "user1@gmail.com",
+  "password": "zumer12345@",
+  "first_name": "Test",
+  "last_name": "User"
+}
+{
+    "message": "User created successfully",
+    "id": 4,
+    "username": "user1"
+}
+--------------------------------------------------------------------------------------
+/api/accounts/login (post)
+authorization: bearer -----
+content-type:app/json
+------------------------------------------------------------------------------------
+
+get /api/accounts/profile/
+---------------------------------------------------------------------------------
+http://127.0.0.1:8000/api/projects/ (post)
+{
+  "title": "Internship Project",
+  "description": "Test project",
+  "status": "active",
+  "priority": "high",
+  "start_date": "2026-05-20",
+  "end_date": "2026-06-01"
+}
+{
+    "id": 1,
+    "title": "Internship Project",
+    "description": "Test project",
+    "status": "active",
+    "priority": "high",
+    "start_date": "2026-05-20",
+    "end_date": "2026-06-01",
+    "created_at": "2026-05-19T20:25:36.236386Z",
+    "updated_at": "2026-05-19T20:25:36.236431Z",
+    "created_by": 4
+}
+
+-------------------------------------------------------------------
+ DETAIL
+/api/projects/1/ (get)
+-----------------------------------------------------------------
+ UPDATE
+PUT
+/api/projects/1/
+-----------------------------------------------------------------
+post http://127.0.0.1:8000/api/tasks/
+{
+  "project": 1,
+  "title": "API banana",
+  "description": "DRF API",
+  "status": "todo",
+  "priority": "medium",
+  "due_date": "2026-05-25"
+}
+{
+    "id": 1,
+    "title": "API banana",
+    "description": "DRF API",
+    "status": "todo",
+    "priority": "medium",
+    "due_date": "2026-05-25",
+    "is_completed": false,
+    "created_at": "2026-05-19T20:38:00.986688Z",
+    "updated_at": "2026-05-19T20:38:00.986719Z",
+    "project": 1,
+    "assigned_to": null,
+    "created_by": 4
+}
+--------------------------------------------------------------------------
+http://127.0.0.1:8000/api/tasks/1/ put update
+----------------------------------------------------------------------------
+🔍 STEP 7 — FILTER TESTING
+📁 Projects filter
+/api/projects/?status=active
+/api/projects/?priority=high
+📝 Tasks filter
+/api/tasks/?status=todo
+/api/tasks/?is_completed=true
+🔎 SEARCH TEST
+/api/projects/?search=Internship
+🔃 ORDERING TEST
+/api/tasks/?ordering=due_date
+📄 PAGINATION TEST
+/api/projects/
+
+👉 Response:
+
+{
+  "count": 10,
+  "next": "...",
+  "previous": null,
+  "results": [...]
+}
+
+
+-----------------------------------------------------------
+❌ WITHOUT TOKEN
+
+👉 remove Authorization header
+
+✔ Response:
+
+401 Unauthorized
+❌ OTHER USER DATA
+
+👉 dusra user banao
+👉 try karo same project ID access
+
+✔ Response:
+
+404 / error
+❌ INVALID DATA
+end_date < start_date ❌
+due_date past ❌
+
+✔ error ana chahiye
+
+
+
+
