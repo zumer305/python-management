@@ -21,7 +21,7 @@ def task_list_create(request):
 
         tasks = Task.objects.filter(created_by=request.user)
 
-        # 🔍 FILTER + SEARCH + ORDERING
+        #  FILTER + SEARCH + ORDERING
         filter_backend = DjangoFilterBackend()
         search_backend = SearchFilter()
         ordering_backend = OrderingFilter()

@@ -11,7 +11,7 @@ class TaskSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['created_by', 'created_at', 'updated_at', 'is_completed']
 
-    # 🔥 VALIDATION
+    #  VALIDATION
     def validate(self, data):
 
         due_date = data.get('due_date')

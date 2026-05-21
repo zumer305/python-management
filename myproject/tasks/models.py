@@ -41,7 +41,7 @@ class Task(models.Model):
 
     def save(self, *args, **kwargs):
 
-        # 🔥 AUTO COMPLETION LOGIC
+        #  AUTO COMPLETION LOGIC
         if self.status == 'done':
             self.is_completed = True
         else:

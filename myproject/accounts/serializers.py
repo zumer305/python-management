@@ -24,7 +24,7 @@ class SignupSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        # 🔐 password automatically hashed
+        #  password automatically hashed
         return User.objects.create_user(
             username=validated_data['username'],
             email=validated_data.get('email'),
@@ -40,7 +40,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name']
 
-    # 🔥 IMPORTANT: UPDATE METHOD (FIX ERROR)
+    #  IMPORTANT: UPDATE METHOD (FIX ERROR)
     def update(self, instance, validated_data):
         instance.username = validated_data.get('username', instance.username)
         instance.email = validated_data.get('email', instance.email)

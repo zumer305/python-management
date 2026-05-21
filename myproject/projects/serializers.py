@@ -10,7 +10,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['created_by', 'created_at', 'updated_at']
 
-    # 🔥 VALIDATION 1: end date check
+    #  VALIDATION 1: end date check
     def validate(self, data):
 
         start_date = data.get('start_date')

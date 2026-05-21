@@ -22,7 +22,7 @@ def project_list_create(request):
 
         projects = Project.objects.filter(created_by=request.user)
 
-        # 🔍 FILTER + SEARCH + ORDERING setup
+        #  FILTER + SEARCH + ORDERING setup
         filter_backend = DjangoFilterBackend()
         search_backend = SearchFilter()
         ordering_backend = OrderingFilter()

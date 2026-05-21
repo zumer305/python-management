@@ -9,7 +9,7 @@ from django.db import IntegrityError, transaction
 from .serializers import SignupSerializer, ProfileSerializer
 
 
-# 👤 SIGNUP
+#  SIGNUP
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def signup(request):
@@ -41,7 +41,7 @@ def signup(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# 👤 PROFILE (GET + UPDATE)
+#  PROFILE (GET + UPDATE)
 @api_view(['GET', 'PUT'])
 @permission_classes([IsAuthenticated])
 def profile(request):
